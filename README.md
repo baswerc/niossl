@@ -45,6 +45,7 @@ NioSslLogger logger = ... // This can be null to disable logging
 
 SSLServerSocketChannel sslServerSocketChannel = new SSLServerSocketChannel(serverSocketChannel, serverContext, sslThreadPool, logger);
 acceptLoop.start(sslServerSocketChannel);
+// At this point you can use sslServerSocketChannel like you would a ServerSocketChannel
 ```
 
 # Additional Documentation
