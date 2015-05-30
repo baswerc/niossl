@@ -1,6 +1,6 @@
 # NIO SSL
 Unlike blocking IO, the JVM does not provide standard SSLSocketChannel and SSLServerSocketChannel classes that extend the base socket channel classes. Instead the SSL exchanges must be manually orchestrated using a <a href="http://docs.oracle.com/javase/7/docs/api/javax/net/ssl/SSLEngine.html">SSLEngine</a>. 
-This project provides implementations for <a href="http://baswerc.github.io/niossl/javadoc/org/baswell/nio/SSLSocketChannel.html">SSLSocketChannel</a> and <a href="http://baswerc.github.io/niossl/javadoc/org/baswell/nio/SSLServerSocketChannel.html">SSLServerSocketChannel</a> that can be used like
+This project provides implementations for <a href="http://baswerc.github.io/niossl/javadoc/org/baswell/niossl/SSLSocketChannel.html">SSLSocketChannel</a> and <a href="http://baswerc.github.io/niossl/javadoc/org/baswell/niossl/SSLServerSocketChannel.html">SSLServerSocketChannel</a> that can be used like
 <a href="http://docs.oracle.com/javase/7/docs/api/javax/net/ssl/SSLSocket.html">SSLSocket</a> and <a href="http://docs.oracle.com/javase/7/docs/api/javax/net/ssl/SSLServerSocket.html">SSLServerSocket</a>.
 
 ## Getting Started
