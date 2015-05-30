@@ -1,0 +1,103 @@
+apply plugin: 'java'
+apply plugin: 'maven'
+apply plugin: 'signing'
+
+version = 0.1
+sourceCompatibility = 1.7
+
+
+task writeNewPom << {
+    pom {
+        project {
+            modelVersion version
+            groupId 'org.baswell'
+            artifactId 'niossl'
+            licenses {
+                license {
+                    name 'The Apache Software License, Version 2.0'
+                    url 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                    distribution 'repo'
+                }
+            }
+        }
+    }.writeTo("$buildDir/newpom.xml")
+}
+
+signing {
+    sign configurations.archives
+}
+
+task javadocJar(type: Jar) {
+    classifier = 'javadoc'
+    from javadoc
+}
+
+task sourcesJar(type: Jar) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+
+artifacts {
+    archives javadocJar, sourcesJar
+}
+
+install {
+    repositories.mavenInstaller {
+        pom.version = version
+        pom.groupId = 'org.baswell'
+        pom.artifactId = 'niossl'
+    }
+}
+
+uploadArchives {
+    repositories {
+        mavenDeployer {
+            beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
+
+            repository(url: "https://oss.sonatype.org/service/local/staging/deploy/maven2/") {
+                authentication(userName: ossrhUsername, password: ossrhPassword)
+            }
+
+            snapshotRepository(url: "https://oss.sonatype.org/content/repositories/snapshots/") {
+                authentication(userName: ossrhUsername, password: ossrhPassword)
+            }
+
+            pom.project {
+                name 'Routes'
+                packaging 'jar'
+                description 'SSLSocketChannel and SSLServerSocketChannel implementations .'
+                version version
+                groupId 'org.baswell'
+                artifactId 'niossl'
+                url 'https://github.com/baswerc/niossl'
+
+                scm {
+                    url 'https://github.com/baswerc/niossl.git'
+                }
+
+                licenses {
+                    license {
+                        name 'The Apache License, Version 2.0'
+                        url 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                    }
+                }
+
+                developers {
+                    developer {
+                        id 'baswerc'
+                        name 'Corey Baswell'
+                        email 'corey.baswell@gmail.com'
+                    }
+                }
+            }
+        }
+    }
+}
+
+jar {
+    from sourceSets.main.allSource
+}
+
+dependencies {
+    testCompile group: 'junit', name: 'junit', version: '[4.0,)'
+}
