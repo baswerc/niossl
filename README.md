@@ -20,7 +20,7 @@ Add the following dependency into your Maven project:
 ````
 
 ### Copy Source
-This project is only a couple of source files with no external dependencies. You can just copy these source files directly in our project.
+This project is only a couple of source files with no external dependencies. You can just <a href="https://github.com/baswerc/niossl/archive/v0.1.zip">copy these source files</a> directly in our project.
 
 ## Using SSLSocketChannel
 
