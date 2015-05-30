@@ -357,35 +357,6 @@ public class SSLSocketChannel extends SocketChannel
                     break WRAP;
                   }
                   break;
-                  /*
-                  if (unwrap(false) == 0)
-                  {
-                    // Don't hold selector thread up waiting on data from peer
-                    if (logDebug) log.debug("wrap: exit: unwrap and no data read");
-                    break WRAP;
-                  }
-                  */
-                  //break UNWRAP;
-                  /*
-                  if (unwrapIfNecessary)
-                  {
-                    if (unwrap(false) == 0)
-                    {
-                      // Don't hold selector thread up waiting on data from peer
-                      if (logDebug) log.debug("wrap: exit: unwrap and no data read");
-                      break UNWRAP;
-                    }
-                    else
-                    {
-                      break;
-                    }
-                  }
-                  else
-                  {
-                    if (logDebug) log.debug("wrap: exit: unwrap and unwrap not allowed");
-                    break UNWRAP;
-                  }
-                  */
 
                 case NEED_TASK:
                   dispatchLongRunningTasks();
