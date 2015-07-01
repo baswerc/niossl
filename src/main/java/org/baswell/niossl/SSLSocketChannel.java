@@ -22,10 +22,8 @@ import javax.net.ssl.SSLSession;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.SocketAddress;
-import java.net.SocketOption;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -465,6 +463,7 @@ public class SSLSocketChannel extends SocketChannel
     return totalWritten;
   }
 
+  /*
   @Override
   public SocketChannel bind(SocketAddress local) throws IOException
   {
@@ -507,6 +506,7 @@ public class SSLSocketChannel extends SocketChannel
   {
     return socketChannel.shutdownOutput();
   }
+  */
 
   @Override
   public Socket socket ()
@@ -538,11 +538,13 @@ public class SSLSocketChannel extends SocketChannel
     return socketChannel.finishConnect();
   }
 
+  /*
   @Override
   public SocketAddress getRemoteAddress() throws IOException
   {
     return socketChannel.getRemoteAddress();
   }
+  */
 
   @Override
   protected void implCloseSelectableChannel ()throws IOException
