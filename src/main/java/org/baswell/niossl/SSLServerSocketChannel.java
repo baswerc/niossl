@@ -96,20 +96,54 @@ public class SSLServerSocketChannel extends ServerSocketChannel
     this.logger = logger;
   }
 
+  /**
+   * Convenience call to keep from having to cast {@code SocketChannel} into {@SSLSocketChannel} when calling {@link #accept()}.
+   *
+   * @return An SSLSocketChannel or {@code null} if this channel is in non-blocking mode and no connection is available to be accepted.
+   * @see #accept()
+   */
+  public SSLSocketChannel acceptOverSSL() throws IOException
+  {
+    return (SSLSocketChannel) accept();
+  }
+
+  /**
+   * <p>Accepts a connection made to this channel's socket.</p>
+   *
+   * <p>If this channel is in non-blocking mode then this method will immediately return null if there are no pending connections. Otherwise it will block indefinitely until a new connection is available or an I/O error occurs.</p>
+   *
+   * <p>The socket channel returned by this method, if any, will be in blocking mode regardless of the blocking mode of this channel.</p>
+   *
+   * <p>This method performs exactly the same security checks as the accept method of the ServerSocket class. That is, if a security manager has been installed then for each new connection this method verifies that the address and port number of the connection's remote endpoint are permitted by the security manager's checkAccept method.</p>
+   *
+   * @return An SSLSocketChannel or {@code null} if this channel is in non-blocking mode and no connection is available to be accepted.
+   * @throws java.nio.channels.NotYetConnectedException If this channel is not yet connected
+   * @throws java.nio.channels.ClosedChannelException If this channel is closed
+   * @throws java.nio.channels.AsynchronousCloseException If another thread closes this channel while the read operation is in progress
+   * @throws java.nio.channels.ClosedByInterruptException If another thread interrupts the current thread while the read operation is in progress, thereby closing the channel and setting the current thread's interrupt status
+   * @throws IOException If some other I/O error occurs
+   */
   @Override
   public SocketChannel accept() throws IOException
   {
     SocketChannel channel = serverSocketChannel.accept();
-    channel.configureBlocking(blockingMode);
+    if (channel == null)
+    {
+      return null;
+    }
+    else
+    {
+      channel.configureBlocking(blockingMode);
 
-    SSLEngine sslEngine = sslContext.createSSLEngine();
-    sslEngine.setUseClientMode(false);
-    sslEngine.setWantClientAuth(wantClientAuthentication);
-    sslEngine.setNeedClientAuth(needClientAuthentication);
-    sslEngine.setEnabledProtocols(filterArray(sslEngine.getEnabledProtocols(), includedProtocols, excludedProtocols));
-    sslEngine.setEnabledCipherSuites(filterArray(sslEngine.getEnabledCipherSuites(), includedCipherSuites, excludedCipherSuites));
+      SSLEngine sslEngine = sslContext.createSSLEngine();
+      sslEngine.setUseClientMode(false);
+      sslEngine.setWantClientAuth(wantClientAuthentication);
+      sslEngine.setNeedClientAuth(needClientAuthentication);
+      sslEngine.setEnabledProtocols(filterArray(sslEngine.getEnabledProtocols(), includedProtocols, excludedProtocols));
+      sslEngine.setEnabledCipherSuites(filterArray(sslEngine.getEnabledCipherSuites(), includedCipherSuites, excludedCipherSuites));
 
-    return new SSLSocketChannel(channel, sslEngine, threadPool, logger);
+      return new SSLSocketChannel(channel, sslEngine, threadPool, logger);
+    }
   }
 
   @Override
