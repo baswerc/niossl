@@ -16,14 +16,14 @@
 package org.baswell.niossl;
 
 import javax.net.ssl.SSLEngine;
-import javax.net.ssl.SSLEngineResult;
-import javax.net.ssl.SSLEngineResult.HandshakeStatus;
 import javax.net.ssl.SSLSession;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.SocketAddress;
+import java.net.SocketOption;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -33,388 +33,163 @@ public class SSLSocketChannel extends SocketChannel
 {
   private final SocketChannel socketChannel;
 
-  private final SSLEngine sslEngine;
-
-  private final ExecutorService executorService;
+  private final SSLEngineBuffer sslEngineBuffer;
 
   private final NioSslLogger log;
-
+  
   private final boolean logDebug;
-
-  private final ByteBuffer networkInboundBuffer;
-
-  private final ByteBuffer applicationInboundBuffer;
-
-  private final ByteBuffer networkOutboundBuffer;
-
-  private final ByteBuffer applicationOutboundBuffer;
 
   /**
    *
    * @param socketChannel The real SocketChannel.
    * @param sslEngine The SSL engine to use for traffic back and forth on the given SocketChannel.
    * @param executorService Used to execute long running, blocking SSL operations such as certificate validation with a CA (<a href="http://docs.oracle.com/javase/7/docs/api/javax/net/ssl/SSLEngineResult.HandshakeStatus.html#NEED_TASK">NEED_TASK</a>)
-   * @param log The logger for debug and error messages. A null logger will result in no log operations.
+   * @param log The logger for debug and error messages. A {@code null} logger will result in no log operations.
+   * @throws IOException
    */
-  public SSLSocketChannel(SocketChannel socketChannel, SSLEngine sslEngine, ExecutorService executorService, NioSslLogger log)
+  public SSLSocketChannel(SocketChannel socketChannel, final SSLEngine sslEngine, ExecutorService executorService, NioSslLogger log)
   {
     super(socketChannel.provider());
+
     this.socketChannel = socketChannel;
-    this.sslEngine = sslEngine;
-    this.executorService = executorService;
     this.log = log;
 
     logDebug = log != null && log.logDebugs();
 
-    SSLSession session = sslEngine.getSession();
-    int applicationBufferSize = session.getApplicationBufferSize();
-    int networkBufferSize = session.getPacketBufferSize();
-
-    networkInboundBuffer = ByteBuffer.allocate(networkBufferSize);
-
-    applicationInboundBuffer = ByteBuffer.allocate(applicationBufferSize);
-    applicationInboundBuffer.flip();
-
-    networkOutboundBuffer = ByteBuffer.allocate(networkBufferSize);
-    networkOutboundBuffer.flip();
-
-    applicationOutboundBuffer = ByteBuffer.allocate(applicationBufferSize);
+    sslEngineBuffer = new SSLEngineBuffer(socketChannel, sslEngine, executorService, log);
   }
 
-   public SocketChannel getRealSocketChannel()
+  public SocketChannel getWrappedSocketChannel()
   {
     return socketChannel;
   }
 
+  /**
+   * <p>Reads a sequence of bytes from this channel into the given buffer.</p>
+   *
+   * <p>An attempt is made to read up to r bytes from the channel, where r is the number of bytes remaining in the buffer, that is, dst.remaining(), at the moment this method is invoked.</p>
+   *
+   * <p>Suppose that a byte sequence of length n is read, where 0 <= n <= r. This byte sequence will be transferred into the buffer so that the first byte in the sequence is at index p and the last byte is at index p + n - 1, where p is the buffer's position at the moment this method is invoked. Upon return the buffer's position will be equal to p + n; its limit will not have changed.</p>
+   *
+   * <p>A read operation might not fill the buffer, and in fact it might not read any bytes at all. Whether or not it does so depends upon the nature and state of the channel. A socket channel in non-blocking mode, for example, cannot read any more bytes than are immediately available from the socket's input buffer; similarly, a file channel cannot read any more bytes than remain in the file. It is guaranteed, however, that if a channel is in blocking mode and there is at least one byte remaining in the buffer then this method will block until at least one byte is read.</
+   *
+   * <p>This method may be invoked at any time. If another thread has already initiated a read operation upon this channel, however, then an invocation of this method will block until the first operation is complete.</p>
+   *
+   * @param applicationBuffer The buffer into which bytes are to be transferred
+   * @return The number of bytes read, possibly zero, or -1 if the channel has reached end-of-stream
+   * @throws java.nio.channels.NotYetConnectedException If this channel is not yet connected
+   * @throws java.nio.channels.ClosedChannelException If this channel is closed
+   * @throws java.nio.channels.AsynchronousCloseException If another thread closes this channel while the read operation is in progress
+   * @throws java.nio.channels.ClosedByInterruptException If another thread interrupts the current thread while the read operation is in progress, thereby closing the channel and setting the current thread's interrupt status
+   * @throws IOException If some other I/O error occurs
+   * @throws IllegalArgumentException If the given applicationBuffer capacity ({@link ByteBuffer#capacity()} is less then the application buffer size of the {@link SSLEngine} session application buffer size ({@link SSLSession#getApplicationBufferSize()} this channel was constructed was.
+   */
   @Override
-  synchronized public int read(ByteBuffer applicationBuffer) throws IOException
+  synchronized public int read(ByteBuffer applicationBuffer) throws IOException, IllegalArgumentException
   {
+    if (logDebug) log.debug("read: " + applicationBuffer.position() + " " + applicationBuffer.limit());
     int intialPosition = applicationBuffer.position();
 
-    if (applicationInboundBuffer.hasRemaining())
+    int readFromChannel = sslEngineBuffer.unwrap(applicationBuffer);
+    if (logDebug) log.debug("read: from channel: " + readFromChannel);
+
+    if (readFromChannel < 0)
     {
-      applicationBuffer.put(applicationInboundBuffer);
+      if (logDebug) log.debug("read: channel closed.");
+      return readFromChannel;
     }
-
-    int readFromChannel = unwrap(true);
-
-    int amountInAppBuffer = applicationBuffer.remaining();
-    int amountInInboundBuffer = applicationInboundBuffer.remaining();
-    if (amountInAppBuffer > 0 && amountInInboundBuffer > 0)
+    else
     {
-      if (amountInAppBuffer >= amountInInboundBuffer)
-      {
-        applicationBuffer.put(applicationInboundBuffer);
-      }
-      else
-      {
-        while (applicationBuffer.hasRemaining())
-        {
-          applicationBuffer.put(applicationInboundBuffer.get());
-        }
-      }
+      int totalRead = applicationBuffer.position() - intialPosition;
+      if (logDebug) log.debug("read: total read: " + totalRead);
+      return totalRead;
     }
-
-    int totalRead = applicationBuffer.position() - intialPosition;
-    if (totalRead == 0 && readFromChannel < 0)
-    {
-      totalRead = readFromChannel;
-    }
-    else if (applicationOutboundBuffer.hasRemaining())
-    {
-      wrap(true);
-    }
-
-
-    if (logDebug) log.debug("read: total read: " + totalRead);
-    return totalRead;
   }
 
-  @Override
-  synchronized public int write(ByteBuffer applicationBuffer) throws IOException
-  {
-    // 1. Fill applicationOutboundBuffer
-
-    int initialAppBufferPosition = applicationBuffer.position();
-    int intialAppOutboundBufferPosition = applicationOutboundBuffer.position();
-    int initialNeworkOutboundBufferPosition = networkOutboundBuffer.position();
-
-    applicationOutboundBuffer.put(applicationBuffer);
-    int writtenToBuffer = applicationBuffer.position() - initialAppBufferPosition;
-
-    // 2. Wrap data and attempt to send to network peer
-
-    int writtenToChannel = wrap(true);
-    if (writtenToChannel <= 0)
-    {
-      /*
-       * If no data was written to outbound channel, it's possible the network buffer is full. The caller of this method
-       * needs to know that no data was actually written in case they want to register for a write ready event.
-       */
-      applicationBuffer.position(initialAppBufferPosition);
-      applicationOutboundBuffer.position(intialAppOutboundBufferPosition);
-      networkOutboundBuffer.position(initialNeworkOutboundBufferPosition);
-
-      writtenToBuffer = writtenToChannel;
-    }
-
-    if (logDebug) log.debug("write: total written: " + writtenToBuffer);
-    return writtenToBuffer;
-  }
-
-  /*
-   * Buffer pre and post conditions:
+  /**
+   * <p>Writes a sequence of bytes to this channel from the given buffer.</p>
    *
-   * networkInboundBuffer pre: write, post: write
-   * applicationInboundBuffer pre: read, post: read
+   * <p>An attempt is made to write up to r bytes to the channel, where r is the number of bytes remaining in the buffer, that is, src.remaining(), at the moment this method is invoked.</p>
    *
+   * <p>Suppose that a byte sequence of length n is written, where 0 <= n <= r. This byte sequence will be transferred from the buffer starting at index p, where p is the buffer's position at the moment this method is invoked; the index of the last byte written will be p + n - 1. Upon return the buffer's position will be equal to p + n; its limit will not have changed.</p>
+   *
+   * <p>Unless otherwise specified, a write operation will return only after writing all of the r requested bytes. Some types of channels, depending upon their state, may write only some of the bytes or possibly none at all. A socket channel in non-blocking mode, for example, cannot write any more bytes than are free in the socket's output buffer.</p>
+   *
+   * <p>This method may be invoked at any time. If another thread has already initiated a write operation upon this channel, however, then an invocation of this method will block until the first operation is complete.</p>
+   *
+   * @param applicationBuffer The buffer from which bytes are to be retrieved
+   * @return The number of bytes written, possibly zero
+   * @throws java.nio.channels.NotYetConnectedException If this channel is not yet connected
+   * @throws java.nio.channels.ClosedChannelException If this channel is closed
+   * @throws java.nio.channels.AsynchronousCloseException If another thread closes this channel while the read operation is in progress
+   * @throws java.nio.channels.ClosedByInterruptException If another thread interrupts the current thread while the read operation is in progress, thereby closing the channel and setting the current thread's interrupt status
+   * @throws IOException If some other I/O error occurs
+   * @throws IllegalArgumentException If the given applicationBuffer capacity ({@link ByteBuffer#capacity()} is less then the application buffer size of the {@link SSLEngine} session application buffer size ({@link SSLSession#getApplicationBufferSize()} this channel was constructed was.
    */
-  synchronized int unwrap(boolean wrapIfNeeded) throws IOException
-  {
-    if (logDebug) log.debug("unwrap:");
-
-    int totalReadFromSocket = 0;
-
-    applicationInboundBuffer.compact();
-    try
-    {
-      // Keep looping until peer has no more data ready or the applicationInboundBuffer is full
-      while (true)
-      {
-        // 1. Pull data from peer into networkInboundBuffer
-
-        int readFromSocket = 0;
-        while (networkInboundBuffer.hasRemaining())
-        {
-          int read = socketChannel.read(networkInboundBuffer);
-          if (logDebug) log.debug("unwrap: socket read " + read + "(" + readFromSocket + ", " + totalReadFromSocket + ")");
-          if (read <= 0)
-          {
-            if ((read < 0) && (readFromSocket == 0) && (totalReadFromSocket == 0))
-            {
-              // No work done and we've reached the end of the channel from peer
-              if (logDebug) log.debug("unwrap: exit: end of channel");
-              return read;
-            }
-            break;
-          }
-          else
-          {
-            readFromSocket += read;
-          }
-        }
-
-        networkInboundBuffer.flip();
-        if (readFromSocket == 0 && !networkInboundBuffer.hasRemaining())
-        {
-          networkInboundBuffer.compact();
-          return totalReadFromSocket;
-        }
-
-        totalReadFromSocket += readFromSocket;
-
-        try
-        {
-          SSLEngineResult result = sslEngine.unwrap(networkInboundBuffer, applicationInboundBuffer);
-          if (logDebug) log.debug("unwrap: result: " + result);
-
-          switch (result.getStatus())
-          {
-            case OK:
-              HandshakeStatus handshakeStatus = result.getHandshakeStatus();
-              switch (handshakeStatus)
-              {
-                case NEED_UNWRAP:
-                  break;
-
-                case NEED_WRAP:
-                  if (wrap(true) == 0)
-                  {
-                    if (logDebug) log.debug("unwrap: exit: wrap needed with no data written");
-                    return totalReadFromSocket;
-                  }
-                  break;
-
-                case NEED_TASK:
-                  dispatchLongRunningTasks();
-                  if (logDebug) log.debug("unwrap: exit: need tasks");
-                  break;
-
-                case NOT_HANDSHAKING:
-                default:
-                  break;
-              }
-              break;
-
-            case BUFFER_OVERFLOW:
-              // Assume that we've already made progressed and put data in applicationInboundBuffer
-              return totalReadFromSocket;
-
-            case CLOSED:
-              if (logDebug) log.debug("unwrap: exit: ssl closed");
-              return totalReadFromSocket == 0 ? -1 : totalReadFromSocket;
-
-            case BUFFER_UNDERFLOW:
-              // Assume that we've already made progressed and put data in applicationInboundBuffer
-              return totalReadFromSocket;
-          }
-        }
-        finally
-        {
-          networkInboundBuffer.compact();
-        }
-      }
-    }
-    finally
-    {
-      applicationInboundBuffer.flip();
-    }
-  }
-
-  /*
-   * Buffer pre and post conditions:
-   *
-   * networkOutboundBuffer pre: read, post read:
-   * applicationOutboundBuffer pre: write, post: write
-   *
-   */
-  synchronized int wrap(boolean unwrapIfNecessary) throws IOException
-  {
-    if (logDebug) log.debug("wrap");
-    int totalWritten = 0;
-
-    sslEngine.wrap(applicationOutboundBuffer, networkOutboundBuffer);
-
-    // 1. Any data already wrapped ? Go ahead and send that.
-    while (networkOutboundBuffer.hasRemaining())
-    {
-      int written = socketChannel.write(networkOutboundBuffer);
-      totalWritten += written;
-      if (logDebug) log.debug("wrap: pre socket write: " + written + " (" + totalWritten + ")");
-
-      if (written <= 0)
-      {
-        return (totalWritten == 0 && written < 0) ? written : totalWritten;
-      }
-    }
-
-    // 2. Any data in application buffer ? Wrap that and send it to peer.
-
-    applicationOutboundBuffer.flip();
-    networkOutboundBuffer.compact();
-    try
-    {
-      WRAP: while (applicationOutboundBuffer.hasRemaining() || networkOutboundBuffer.hasRemaining())
-      {
-        SSLEngineResult result = sslEngine.wrap(applicationOutboundBuffer, networkOutboundBuffer);
-        if (logDebug) log.debug("wrap: result: " + result);
-        networkOutboundBuffer.flip();
-        try
-        {
-          // Was any encrypted application data produced ? If so go ahead and try to send to peer.
-          int written = 0;
-          while (networkOutboundBuffer.hasRemaining())
-          {
-            int nextWritten = socketChannel.write(networkOutboundBuffer);
-            if (logDebug) log.debug("wrap: post socket write: " + nextWritten + " (" + written + ")");
-
-            if (nextWritten == 0)
-            {
-              break;
-            }
-            else if (nextWritten < 0)
-            {
-              totalWritten += written;
-              return (totalWritten == 0) ? nextWritten : totalWritten;
-            }
-            written += nextWritten;
-          }
-
-          if (logDebug) log.debug("wrap: post socket write: " + written + " (" + totalWritten + ")");
-
-          totalWritten += written;
-
-          switch (result.getStatus())
-          {
-            case OK:
-              HandshakeStatus handshakeStatus = result.getHandshakeStatus();
-              switch (handshakeStatus)
-              {
-                case NEED_WRAP:
-                  // Not enough data in applicationOutboundBuffer.
-                  if (written == 0)
-                  {
-                    if (logDebug) log.debug("wrap: exit: need wrap & no data written");
-                    break WRAP;
-                  }
-                  break;
-
-                case NEED_UNWRAP:
-                  if (unwrap(false) == 0)
-                  {
-                    break WRAP;
-                  }
-                  break;
-
-                case NEED_TASK:
-                  dispatchLongRunningTasks();
-                  if (logDebug) log.debug("wrap: exit: need tasks");
-                  break;
-
-                case NOT_HANDSHAKING:
-                  if (written <= 0)
-                  {
-                    if (logDebug) log.debug("wrap: exit: no data written");
-                    break WRAP;
-                  }
-              }
-              break;
-
-            case BUFFER_OVERFLOW:
-              throw new IOException("Buffer overflow.");
-
-            case CLOSED:
-              if (logDebug) log.debug("wrap: exit: closed");
-              break WRAP;
-
-            case BUFFER_UNDERFLOW:
-              // Need more data in applicationOutboundBuffer
-              if (logDebug) log.debug("wrap: exit: buffer underflow");
-              break WRAP;
-          }
-        }
-        finally
-        {
-          networkOutboundBuffer.compact();
-        }
-      }
-    }
-    finally
-    {
-      applicationOutboundBuffer.compact();
-      networkOutboundBuffer.flip();
-    }
-
-    if (logDebug) log.debug("wrap: return: " + totalWritten);
-
-    return totalWritten;
-  }
-
-
   @Override
-  public long read(ByteBuffer[] byteBuffers, int offset, int length) throws IOException
+  synchronized public int write(ByteBuffer applicationBuffer) throws IOException, IllegalArgumentException
+  {
+    if (logDebug) log.debug("write:");
+
+    int intialPosition = applicationBuffer.position();
+    int writtenToChannel = sslEngineBuffer.wrap(applicationBuffer);
+
+    if (writtenToChannel < 0)
+    {
+      if (logDebug) log.debug("write: channel closed");
+      return writtenToChannel;
+    }
+    else
+    {
+      int totalWritten = applicationBuffer.position() - intialPosition;
+      if (logDebug) log.debug("write: total written: " + totalWritten + " amount available in network outbound: " + applicationBuffer.remaining());
+      return totalWritten;
+    }
+  }
+
+
+  /**
+   * <p>Reads a sequence of bytes from this channel into a subsequence of the given buffers.</p>
+   *
+   * <p>An invocation of this method attempts to read up to r bytes from this channel, where r is the total number of bytes remaining the specified subsequence of the given buffer array, that is,
+   * <pre>
+   * {@code
+   * dsts[offset].remaining()
+   *   + dsts[offset+1].remaining()
+   *   + ... + dsts[offset+length-1].remaining()
+   * }
+   * </pre>
+   * <p>at the moment that this method is invoked.</p>
+   *
+   * <p>Suppose that a byte sequence of length n is read, where 0 <= n <= r. Up to the first dsts[offset].remaining() bytes of this sequence are transferred into buffer dsts[offset], up to the next dsts[offset+1].remaining() bytes are transferred into buffer dsts[offset+1], and so forth, until the entire byte sequence is transferred into the given buffers. As many bytes as possible are transferred into each buffer, hence the final position of each updated buffer, except the last updated buffer, is guaranteed to be equal to that buffer's limit.</p>
+   *
+   * <p>This method may be invoked at any time. If another thread has already initiated a read operation upon this channel, however, then an invocation of this method will block until the first operation is complete.</p>
+   *
+   * @param applicationByteBuffers The buffers into which bytes are to be transferred
+   * @param offset The offset within the buffer array of the first buffer into which bytes are to be transferred; must be non-negative and no larger than dsts.length
+   * @param length The maximum number of buffers to be accessed; must be non-negative and no larger than <code>dsts.length - offset</code>
+   * @return The number of bytes read, possibly zero, or -1 if the channel has reached end-of-stream
+   * @throws java.nio.channels.NotYetConnectedException If this channel is not yet connected
+   * @throws java.nio.channels.ClosedChannelException If this channel is closed
+   * @throws java.nio.channels.AsynchronousCloseException If another thread closes this channel while the read operation is in progress
+   * @throws java.nio.channels.ClosedByInterruptException If another thread interrupts the current thread while the read operation is in progress, thereby closing the channel and setting the current thread's interrupt status
+   * @throws IOException If some other I/O error occurs
+   * @throws IllegalArgumentException If one of the given applicationBuffers capacity ({@link ByteBuffer#capacity()} is less then the application buffer size of the {@link SSLEngine} session application buffer size ({@link SSLSession#getApplicationBufferSize()} this channel was constructed was.
+   */
+  @Override
+  public long read(ByteBuffer[] applicationByteBuffers, int offset, int length) throws IOException, IllegalArgumentException
   {
     long totalRead = 0;
     for (int i = offset; i < length; i++)
     {
-      ByteBuffer byteBuffer = byteBuffers[i];
-      if (byteBuffer.hasRemaining())
+      ByteBuffer applicationByteBuffer = applicationByteBuffers[i];
+      if (applicationByteBuffer.hasRemaining())
       {
-        int read = read(byteBuffer);
+        int read = read(applicationByteBuffer);
         if (read > 0)
         {
           totalRead += read;
-          if (byteBuffer.hasRemaining())
+          if (applicationByteBuffer.hasRemaining())
           {
             break;
           }
@@ -432,13 +207,43 @@ public class SSLSocketChannel extends SocketChannel
     return totalRead;
   }
 
+  /**
+   * <p>Writes a sequence of bytes to this channel from a subsequence of the given buffers.</p>
+   *
+   * <p>An attempt is made to write up to r bytes to this channel, where r is the total number of bytes remaining in the specified subsequence of the given buffer array, that is,</p>
+   * <pre>
+   * {@code
+   * srcs[offset].remaining()
+   *   + srcs[offset+1].remaining()
+   *   + ... + srcs[offset+length-1].remaining()
+   * }
+   * </pre>
+   * <p>at the moment that this method is invoked.</p>
+   *
+   * <p>Suppose that a byte sequence of length n is written, where 0 <= n <= r. Up to the first srcs[offset].remaining() bytes of this sequence are written from buffer srcs[offset], up to the next srcs[offset+1].remaining() bytes are written from buffer srcs[offset+1], and so forth, until the entire byte sequence is written. As many bytes as possible are written from each buffer, hence the final position of each updated buffer, except the last updated buffer, is guaranteed to be equal to that buffer's limit.</p>
+   *
+   * <p>Unless otherwise specified, a write operation will return only after writing all of the r requested bytes. Some types of channels, depending upon their state, may write only some of the bytes or possibly none at all. A socket channel in non-blocking mode, for example, cannot write any more bytes than are free in the socket's output buffer.</p>
+   *
+   * <p>This method may be invoked at any time. If another thread has already initiated a write operation upon this channel, however, then an invocation of this method will block until the first operation is complete.</p>
+   *
+   * @param applicationByteBuffers The buffers from which bytes are to be retrieved
+   * @param offset offset - The offset within the buffer array of the first buffer from which bytes are to be retrieved; must be non-negative and no larger than <code>srcs.length</code>
+   * @param length The maximum number of buffers to be accessed; must be non-negative and no larger than <code>srcs.length - offset</code>
+   * @return The number of bytes written, possibly zero
+   * @throws java.nio.channels.NotYetConnectedException If this channel is not yet connected
+   * @throws java.nio.channels.ClosedChannelException If this channel is closed
+   * @throws java.nio.channels.AsynchronousCloseException If another thread closes this channel while the read operation is in progress
+   * @throws java.nio.channels.ClosedByInterruptException If another thread interrupts the current thread while the read operation is in progress, thereby closing the channel and setting the current thread's interrupt status
+   * @throws IOException If some other I/O error occurs
+   * @throws IllegalArgumentException If one of the given applicationBuffers capacity ({@link ByteBuffer#capacity()} is less then the application buffer size of the {@link SSLEngine} session application buffer size ({@link SSLSession#getApplicationBufferSize()} this channel was constructed was.
+   */
   @Override
-  public long write(ByteBuffer[] byteBuffers, int offset, int length) throws IOException
+  public long write(ByteBuffer[] applicationByteBuffers, int offset, int length) throws IOException, IllegalArgumentException
   {
     long totalWritten = 0;
     for (int i = offset; i < length; i++)
     {
-      ByteBuffer byteBuffer = byteBuffers[i];
+      ByteBuffer byteBuffer = applicationByteBuffers[i];
       if (byteBuffer.hasRemaining())
       {
         int written = write(byteBuffer);
@@ -463,7 +268,36 @@ public class SSLSocketChannel extends SocketChannel
     return totalWritten;
   }
 
-  /*
+  @Override
+  public Socket socket ()
+  {
+    return socketChannel.socket();
+  }
+
+  @Override
+  public boolean isConnected ()
+  {
+    return socketChannel.isConnected();
+  }
+
+  @Override
+  public boolean isConnectionPending ()
+  {
+    return socketChannel.isConnectionPending();
+  }
+
+  @Override
+  public boolean connect (SocketAddress socketAddress)throws IOException
+  {
+    return socketChannel.connect(socketAddress);
+  }
+
+  @Override
+  public boolean finishConnect ()throws IOException
+  {
+    return socketChannel.finishConnect();
+  }
+
   @Override
   public SocketChannel bind(SocketAddress local) throws IOException
   {
@@ -506,62 +340,11 @@ public class SSLSocketChannel extends SocketChannel
   {
     return socketChannel.shutdownOutput();
   }
-  */
 
-  @Override
-  public Socket socket ()
-  {
-    return socketChannel.socket();
-  }
-
-  @Override
-  public boolean isConnected ()
-  {
-    return socketChannel.isConnected();
-  }
-
-  @Override
-  public boolean isConnectionPending ()
-  {
-    return socketChannel.isConnectionPending();
-  }
-
-  @Override
-  public boolean connect (SocketAddress socketAddress)throws IOException
-  {
-    return socketChannel.connect(socketAddress);
-  }
-
-  @Override
-  public boolean finishConnect ()throws IOException
-  {
-    return socketChannel.finishConnect();
-  }
-
-  /*
   @Override
   public SocketAddress getRemoteAddress() throws IOException
   {
     return socketChannel.getRemoteAddress();
-  }
-  */
-
-  @Override
-  protected void implCloseSelectableChannel ()throws IOException
-  {
-    if (networkOutboundBuffer.hasRemaining())
-    {
-      try
-      {
-        socketChannel.write(networkOutboundBuffer);
-      }
-      catch (Exception e)
-      {}
-    }
-
-    socketChannel.close();
-    sslEngine.closeInbound();
-    sslEngine.closeOutbound();
   }
 
   @Override
@@ -570,12 +353,17 @@ public class SSLSocketChannel extends SocketChannel
     socketChannel.configureBlocking(b);
   }
 
-  void dispatchLongRunningTasks()
+  @Override
+  protected void implCloseSelectableChannel ()throws IOException
   {
-    Runnable runnable;
-    while ((runnable = sslEngine.getDelegatedTask()) != null)
+    try
     {
-      executorService.execute(runnable);
+      sslEngineBuffer.flushNetworkOutbound();
     }
+    catch (Exception e)
+    {}
+
+    socketChannel.close();
+    sslEngineBuffer.close();
   }
 }

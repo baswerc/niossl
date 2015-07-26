@@ -20,6 +20,7 @@ import javax.net.ssl.SSLEngine;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.SocketAddress;
+import java.net.SocketOption;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
@@ -111,8 +112,6 @@ public class SSLServerSocketChannel extends ServerSocketChannel
     return new SSLSocketChannel(channel, sslEngine, threadPool, logger);
   }
 
-
-  /*
   @Override
   public ServerSocketChannel bind(SocketAddress local, int backlog) throws IOException
   {
@@ -142,7 +141,6 @@ public class SSLServerSocketChannel extends ServerSocketChannel
   {
     return serverSocketChannel.supportedOptions();
   }
-  */
 
   @Override
   public ServerSocket socket()
