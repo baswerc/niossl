@@ -97,7 +97,7 @@ public class SSLServerSocketChannel extends ServerSocketChannel
   }
 
   /**
-   * Convenience call to keep from having to cast {@code SocketChannel} into {@SSLSocketChannel} when calling {@link #accept()}.
+   * Convenience call to keep from having to cast {@code SocketChannel} into {@link SSLSocketChannel} when calling {@link #accept()}.
    *
    * @return An SSLSocketChannel or {@code null} if this channel is in non-blocking mode and no connection is available to be accepted.
    * @see #accept()
